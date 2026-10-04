@@ -51,35 +51,114 @@ function useLive(config:Config,signal:string|undefined,refresh:()=>Promise<void>
 }
 function Connection(){return null;}
 function Guest({config,qr}:{config:Config;qr:string}){
- const [menu,setMenu]=useState<Menu|null>(null),[visit,setVisit]=useState<Visit|null>(null),[token,setToken]=useState(''),[replaced,setReplaced]=useState(false),[cart,setCart]=useState<Item[]>([]),[pending,setPending]=useState<Pending|null>(null),[tab,setTab]=useState('home'),[busy,setBusy]=useState(false),[error,setError]=useState(''),[search,setSearch]=useState('');
+ const [menu,setMenu]=useState<Menu|null>(null),[visit,setVisit]=useState<Visit|null>(null),[token,setToken]=useState(''),[replaced,setReplaced]=useState(false),[cart,setCart]=useState<Item[]>([]),[pending,setPending]=useState<Pending|null>(null),[tab,setTab]=useState('menu'),[busy,setBusy]=useState(false),[error,setError]=useState(''),[search,setSearch]=useState('');
  const current=useRef({cart,pending,visit,token});current.current={cart,pending,visit,token};const lock=useRef(false),draftLoaded=useRef(''),storageFailed=useRef(false);
- const applyVisit=useCallback((v:Visit)=>{if(draftLoaded.current!==v.id){try{const d=readDraft(sessionStorage.getItem(draftKey(qr,v.id)));setCart(d.cart);setPending(d.pending);draftLoaded.current=v.id}catch{storageFailed.current=true;setError('Your saved bag could not be read. Keep this page open and contact staff before ordering.')}}setVisit(v)},[qr]);
+ const applyVisit=useCallback((v:Visit)=>{
+  if(v.closed){
+   try{sessionStorage.removeItem(tokenKey(qr));if(v.id)sessionStorage.removeItem(draftKey(qr,v.id));}catch{}
+  }else if(draftLoaded.current!==v.id){
+   try{const d=readDraft(sessionStorage.getItem(draftKey(qr,v.id)));setCart(d.cart);setPending(d.pending);draftLoaded.current=v.id;}catch{storageFailed.current=true;setError('Your saved bag could not be read. Keep this page open and contact staff before ordering.');}
+  }
+  setVisit(v);
+ },[qr]);
  const endAccess=useCallback(()=>{setReplaced(true);setVisit(null);setCart([]);setPending(null);current.current={...current.current,visit:null,cart:[],pending:null};draftLoaded.current='';},[]);
- const refresh=useCallback(async()=>{let m:Menu;try{m=await rpc<Menu>(config,'tfp_menu',{p_qr:qr})}catch(e){if(e instanceof RpcError&&!e.uncertain)setError(e.message);throw e}setMenu(m);if(current.current.token&&draftLoaded.current){try{applyVisit(await rpc<Visit>(config,'tfp_guest',{p_token:current.current.token}))}catch(e){if(message(e).includes('TABLE_SESSION_REPLACED'))endAccess();throw e}}},[config,qr,applyVisit,endAccess]);
+ const refresh=useCallback(async()=>{
+  let m:Menu;
+  try{m=await rpc<Menu>(config,'tfp_menu',{p_qr:qr});}catch(e){if(e instanceof RpcError&&!e.uncertain)setError(e.message);throw e;}
+  setMenu(m);
+  if(current.current.token&&draftLoaded.current){
+   try{
+    const v=await rpc<Visit>(config,'tfp_guest',{p_token:current.current.token});
+    applyVisit(v);
+   }catch(e){if(message(e).includes('TABLE_SESSION_REPLACED'))endAccess();throw e;}
+  }
+ },[config,qr,applyVisit,endAccess]);
  const live=useLive(config,menu?.signal,refresh);
- useEffect(()=>{let active=true;if((config.version||0)<4)return;setBusy(true);try{const saved=sessionStorage.getItem(tokenKey(qr));const t=saved||guestToken();if(!saved)sessionStorage.setItem(tokenKey(qr),t);setToken(t);rpc<Visit>(config,'tfp_claim_table',{p_qr:qr,p_guest_token:t}).then(v=>{if(active)applyVisit(v)}).catch(e=>{if(active){if(message(e).includes('TABLE_SESSION_REPLACED'))endAccess();else setError(message(e))}}).finally(()=>{if(active)setBusy(false)})}catch{storageFailed.current=true;setError('Enable browser storage before ordering.');setBusy(false)}return()=>{active=false}},[config,qr,applyVisit,endAccess]);
- function persist(items:Item[],p:Pending|null){const v=current.current.visit;if(!v)return;sessionStorage.setItem(draftKey(qr,v.id),JSON.stringify({cart:items,pending:p}));current.current={...current.current,cart:items,pending:p};setCart(items);setPending(p)}
- function change(d:Dish,n:number){if(lock.current||current.current.pending||visit?.closed)return;try{persist(stage(current.current.cart,d,n),null)}catch(e){toast.error(message(e))}}
- async function join(){if(lock.current||storageFailed.current||replaced)return;lock.current=true;setBusy(true);setError('');try{applyVisit(await rpc<Visit>(config,'tfp_claim_table',{p_qr:qr,p_guest_token:token}))}catch(e){if(message(e).includes('TABLE_SESSION_REPLACED'))endAccess();else setError(message(e))}finally{lock.current=false;setBusy(false)}}
- async function order(){if(lock.current||storageFailed.current||!current.current.visit)return;lock.current=true;setBusy(true);setError('');let p=current.current.pending;try{
- if(!p){if(!current.current.cart.length)return;p={id:crypto.randomUUID(),items:current.current.cart.map(i=>({...i}))};persist(current.current.cart,p)}
- const id=await rpc<string>(config,'tfp_order',{p_token:token,p_request:p.id,p_items:p.items.map(({id,qty,note,price})=>({id,qty,note,price}))});
- try{persist([],null)}catch{storageFailed.current=true;current.current={...current.current,cart:[],pending:null};setCart([]);setPending(null);setError('Order accepted. Browser storage failed; ask staff before ordering again.')}setTab('orders');toast.success(`Kitchen accepted order ${id.slice(0,6).toUpperCase()}`);await refresh().catch(()=>setError('Your order was accepted. Reconnecting to refresh its status…'));
- }catch(e){if(message(e).includes('TABLE_SESSION_REPLACED'))endAccess();if(e instanceof RpcError&&!e.uncertain&&p){try{persist(current.current.cart,null)}catch{}}setError(message(e))}finally{lock.current=false;setBusy(false)}}
 
- async function requestService(kind:string){if(lock.current||replaced||!visit||visit.closed)return;lock.current=true;setBusy(true);try{await rpc(config,'tfp_service_request',{p_token:token,p_kind:kind});toast.success(kind+' requested. Your waiter has been notified.')}catch(e){setError(message(e))}finally{lock.current=false;setBusy(false)}}
+ const claim=useCallback(async(forceFresh=false)=>{
+  if((config.version||0)<4)return;
+  setBusy(true);setError('');
+  try{
+   let t=sessionStorage.getItem(tokenKey(qr));
+   if(!t||forceFresh){t=guestToken();sessionStorage.setItem(tokenKey(qr),t);}
+   setToken(t);
+   const v=await rpc<Visit>(config,'tfp_claim_table',{p_qr:qr,p_guest_token:t});
+   if(v.closed){
+    sessionStorage.removeItem(tokenKey(qr));
+    const freshToken=guestToken();
+    sessionStorage.setItem(tokenKey(qr),freshToken);
+    setToken(freshToken);
+    const freshVisit=await rpc<Visit>(config,'tfp_claim_table',{p_qr:qr,p_guest_token:freshToken});
+    applyVisit(freshVisit);
+   }else{
+    applyVisit(v);
+   }
+  }catch(e){
+   if(message(e).includes('TABLE_SESSION_REPLACED'))endAccess();
+   else setError(message(e));
+  }finally{setBusy(false);}
+ },[config,qr,applyVisit,endAccess]);
+
+ useEffect(()=>{void claim();},[claim]);
+
+ useEffect(()=>{
+  if(!visit?.closed)return;
+  try{sessionStorage.removeItem(tokenKey(qr));if(visit?.id)sessionStorage.removeItem(draftKey(qr,visit.id));}catch{}
+  const timer=setTimeout(()=>{
+   setVisit(null);setCart([]);setPending(null);draftLoaded.current='';
+   void claim(true);
+  },6000);
+  return()=>clearTimeout(timer);
+ },[visit?.closed,claim,qr,visit?.id]);
+
+ function persist(items:Item[],p:Pending|null){
+  const v=current.current.visit;
+  if(v){try{sessionStorage.setItem(draftKey(qr,v.id),JSON.stringify({cart:items,pending:p}));}catch{}}
+  current.current={...current.current,cart:items,pending:p};setCart(items);setPending(p);
+ }
+ function change(d:Dish,n:number){
+  if(lock.current||current.current.pending||visit?.closed)return;
+  try{persist(stage(current.current.cart,d,n),null);}catch(e){toast.error(message(e));}
+ }
+ async function join(){
+  if(lock.current||storageFailed.current||replaced)return;
+  lock.current=true;setBusy(true);setError('');
+  try{await claim();}finally{lock.current=false;setBusy(false);}
+ }
+ async function order(){
+  if(lock.current||storageFailed.current)return;
+  let currentVisit=current.current.visit;
+  if(!currentVisit){await claim();currentVisit=current.current.visit;}
+  if(!currentVisit||currentVisit.closed)return;
+  lock.current=true;setBusy(true);setError('');
+  let p=current.current.pending;
+  try{
+   if(!p){if(!current.current.cart.length)return;p={id:crypto.randomUUID(),items:current.current.cart.map(i=>({...i}))};persist(current.current.cart,p);}
+   const id=await rpc<string>(config,'tfp_order',{p_token:token,p_request:p.id,p_items:p.items.map(({id,qty,note,price})=>({id,qty,note,price}))});
+   try{persist([],null);}catch{storageFailed.current=true;current.current={...current.current,cart:[],pending:null};setCart([]);setPending(null);setError('Order accepted. Browser storage failed; ask staff before ordering again.');}
+   setTab('orders');toast.success(`Kitchen accepted order ${id.slice(0,6).toUpperCase()}`);
+   await refresh().catch(()=>setError('Your order was accepted. Reconnecting to refresh its status…'));
+  }catch(e){
+   if(message(e).includes('TABLE_SESSION_REPLACED'))endAccess();
+   if(e instanceof RpcError&&!e.uncertain&&p){try{persist(current.current.cart,null);}catch{}}
+   setError(message(e));
+  }finally{lock.current=false;setBusy(false);}
+ }
+
+ async function requestService(kind:string){if(lock.current||replaced||!visit||visit.closed)return;lock.current=true;setBusy(true);try{await rpc(config,'tfp_service_request',{p_token:token,p_kind:kind});toast.success(kind+' requested. Your waiter has been notified.');}catch(e){setError(message(e));}finally{lock.current=false;setBusy(false);}}
  const receipt=visit?bill(visit):null;
  if((config.version||0)<4)return <main className="pilot-main"><section className="panel"><h1>QR access is being updated.</h1><p>Please ask staff for help. The database needs the new QR session update before code-free entry is available.</p><a href="/" className="btn">Back to scanner</a></section></main>;
  if(replaced)return <main className="pilot-main"><section className="panel session-ended" role="status"><LockKeyhole size={36}/><h1>This table was opened on another device.</h1><p>Your ordering session has ended. Confirmed orders are still with the restaurant; nothing has been cancelled or charged again.</p><a href="/" className="btn">Back to home</a></section></main>;
- return <main className="pilot-main pilot-dining"><div className="pilot-heading"><div><p className="eyebrow">YOUR TABLE</p><h1>{menu?.name||'Loading menu…'}</h1></div>{menu&&<span className="tablebadge">Table {menu.table}</span>}</div>{error&&<p className="pilot-error" role="alert">{error}</p>}{!menu&&<p>If the menu does not load, ask staff to check the connection.</p>}{!visit?<section className="panel pilot-join"><h2>{busy?'Opening your table…':'Your table is almost ready'}</h2><p>No code needed. One device can order at a time.</p>{!busy&&<button className="btn" disabled={!menu||!token||storageFailed.current} onClick={join}>Try opening table again</button>}</section>:visit.closed?<section className="panel"><h2>Thank you for dining with us.</h2><p>This visit is closed. Its bill stays separate from your next meal.</p><a className="btn" href="/">Back to scanner</a></section>:<p className="pilot-visit">Visit {visit.id.slice(0,6).toUpperCase()} · Preparation estimate {menu?.wait} minutes</p>}
+
+ return <main className="pilot-main pilot-dining"><div className="pilot-heading"><div><p className="eyebrow">YOUR TABLE</p><h1>{menu?.name||'Loading menu…'}</h1></div>{menu&&<span className="tablebadge">Table {menu.table}</span>}</div>{error&&<p className="pilot-error" role="alert">{error}</p>}{visit?.closed?<section className="panel" style={{textAlign:'center',padding:'28px 16px',margin:'18px 0'}}><h2>Thank you for dining with us!</h2><p>This table visit has been settled and closed.</p>{receipt&&<div style={{margin:'14px auto',maxWidth:300,padding:12,background:'#f5f7f2',borderRadius:10}}><p style={{margin:0,fontSize:15}}>Total Paid: <b>{money(receipt.total)}</b></p></div>}<p className="muted" style={{fontSize:13,margin:'12px 0'}}>Ready for the next customer in a few moments…</p><button className="btn" onClick={()=>{setVisit(null);setCart([]);setPending(null);draftLoaded.current='';void claim(true);}}>Start new table session</button></section>:visit?<p className="pilot-visit">Visit {visit.id.slice(0,6).toUpperCase()} · Preparation estimate {menu?.wait} minutes</p>:null}
  {pending&&<section className="panel pilot-pending"><h2>Order confirmation needed</h2><p>Keep this bag unchanged. Retry to check or complete the same order without sending a duplicate.</p><button className="btn" disabled={busy} onClick={order}>{busy?'Checking order…':'Retry same order'}</button></section>}
  {tab==='home'&&visit&&!visit.closed&&<><section className="dining-welcome"><span>MAKE YOURSELF AT HOME</span><h2>What sounds good?</h2><p>Your table. Everything you need, one tap away.</p></section><section className="app-launcher dining-launcher" aria-label="Table tools">{[['menu','Explore menu','Find your next favourite',UtensilsCrossed],['bag','Your bag',cart.length?money(sum(cart)):'Ready when you are',ShoppingBag],['orders','Track your meal',visit.orders.length+' confirmed orders',ChefHat],['bill','Bill & feedback',receipt?money(receipt.total):'Your table bill',ReceiptText],...((config.version||0)>=6?[['service','Need anything?','Water, cutlery or a helping hand',Bell]]:[])].map(([id,label,detail,Icon],i)=>{const ToolIcon=Icon as typeof ChefHat;return <button key={id as string} className={'app-tool app-tool-'+i} onClick={()=>setTab(id as string)}><span className="app-tool-icon"><ToolIcon size={25}/></span><ArrowUpRight className="app-tool-arrow" size={18}/><strong>{label as string}</strong><small>{detail as string}</small></button>})}</section></>}
  {tab==='service'&&visit&&!visit.closed&&<section className="ops-panel"><h2>A little help at your table</h2><p className="muted">Your requests go straight to the waiter.</p><div className="app-launcher dining-launcher">{['Water','Call waiter','Cutlery','Help with bill'].map((kind,i)=><button key={kind} className={'app-tool app-tool-'+i} disabled={busy} onClick={()=>void requestService(kind)}><Bell size={25}/><strong>{kind}</strong><small>Send request</small></button>)}</div></section>}
- {tab==='menu'&&menu&&<>{menu.dishes.length===0&&<section className="panel"><h2>The menu is being prepared.</h2><p>Please ask your waiter to help you order.</p></section>}<div className="searchbox"><input aria-label="Search live menu" placeholder="Find a dish…" value={search} onChange={e=>setSearch(e.target.value)}/></div><div className="dishgrid pilot-menu">{menu.dishes.filter(d=>d.name.toLowerCase().includes(search.toLowerCase())).map(d=><article className="dishcard" key={d.id}>{d.image&&<img className="pilot-food" src={d.image} alt={d.name} loading="lazy"/>}<div className="dish-content"><p className="dishmeta">{d.veg?'VEGETARIAN':'NON-VEGETARIAN'} · {d.category}</p><h2 className="dish-name">{d.name}</h2><p>{d.description}</p><div className="between"><strong>{money(d.price)}</strong><button className="addbtn" disabled={!d.available||!visit||!!visit.closed||busy||!!pending||storageFailed.current} onClick={()=>change(d,1)}>{d.available?'Add':'Sold out'}<Plus size={16}/></button></div></div></article>)}</div></>}
- {tab==='bag'&&<section className="panel"><h2>Your bag</h2>{!cart.length?<p>Add dishes from the menu.</p>:<>{cart.map(i=><div className="pilot-bagrow" key={i.id}><div><strong>{i.name}</strong><p>{money(i.price)} each</p><label>Kitchen note<input maxLength={200} value={i.note} disabled={busy||!!pending||!!visit?.closed} onChange={e=>{try{persist(current.current.cart.map(x=>x.id===i.id?{...x,note:e.target.value}:x),null)}catch(error){toast.error(message(error))}}}/></label></div><div className="quantity"><button aria-label={`Remove one ${i.name}`} disabled={busy||!!pending||!!visit?.closed} onClick={()=>change(menu?.dishes.find(d=>d.id===i.id)||{...i,description:'',category:'',veg:false,image:'',available:false},-1)}><Minus size={16}/></button><b>{i.qty}</b><button aria-label={`Add one ${i.name}`} disabled={busy||!!pending||!!visit?.closed||i.qty>=20} onClick={()=>{const d=menu?.dishes.find(d=>d.id===i.id);if(d)change(d,1)}}><Plus size={16}/></button></div></div>)}<div className="between"><strong>Subtotal</strong><strong>{money(sum(cart))}</strong></div><p>Tax is shown on your visit’s final bill.</p><button className="btn full" disabled={busy||!!visit?.closed||!!pending||storageFailed.current} onClick={order}>{busy?'Sending to kitchen…':'Place order'}</button></>}</section>}
+ {tab==='menu'&&menu&&<>{menu.dishes.length===0&&<section className="panel"><h2>The menu is being prepared.</h2><p>Please ask your waiter to help you order.</p></section>}<div className="searchbox"><input aria-label="Search live menu" placeholder="Find a dish…" value={search} onChange={e=>setSearch(e.target.value)}/></div><div className="dishgrid pilot-menu">{menu.dishes.filter(d=>d.name.toLowerCase().includes(search.toLowerCase())).map(d=><article className="dishcard" key={d.id}>{d.image&&<img className="pilot-food" src={d.image} alt={d.name} loading="lazy"/>}<div className="dish-content"><p className="dishmeta">{d.veg?'VEGETARIAN':'NON-VEGETARIAN'} · {d.category}</p><h2 className="dish-name">{d.name}</h2><p>{d.description}</p><div className="between"><strong>{money(d.price)}</strong><button className="addbtn" disabled={!d.available||(visit&&!!visit.closed)||busy||!!pending||storageFailed.current} onClick={()=>change(d,1)}>{d.available?'Add':'Sold out'}<Plus size={16}/></button></div></div></article>)}</div></>}
+ {tab==='bag'&&<section className="panel"><h2>Your bag</h2>{!cart.length?<p>Add dishes from the menu.</p>:<>{cart.map(i=><div className="pilot-bagrow" key={i.id}><div><strong>{i.name}</strong><p>{money(i.price)} each</p><label>Kitchen note<input maxLength={200} value={i.note} disabled={busy||!!pending||!!visit?.closed} onChange={e=>{try{persist(current.current.cart.map(x=>x.id===i.id?{...x,note:e.target.value}:x),null);}catch(error){toast.error(message(error));}}}/></label></div><div className="quantity"><button aria-label={`Remove one ${i.name}`} disabled={busy||!!pending||!!visit?.closed} onClick={()=>change(menu?.dishes.find(d=>d.id===i.id)||{...i,description:'',category:'',veg:false,image:'',available:false},-1)}><Minus size={16}/></button><b>{i.qty}</b><button aria-label={`Add one ${i.name}`} disabled={busy||!!pending||!!visit?.closed||i.qty>=20} onClick={()=>{const d=menu?.dishes.find(d=>d.id===i.id);if(d)change(d,1);}}><Plus size={16}/></button></div></div>)}<div className="between"><strong>Subtotal</strong><strong>{money(sum(cart))}</strong></div><p>Tax is shown on your visit’s final bill.</p><button className="btn full" disabled={busy||(visit&&!!visit.closed)||!!pending||storageFailed.current} onClick={order}>{busy?'Sending to kitchen…':'Place order'}</button></>}</section>}
  {tab==='orders'&&<section><h2>Your table’s orders</h2>{visit?.orders.length?visit.orders.map(o=><TicketCard key={o.id} ticket={o}/>):<p>No confirmed orders yet.</p>}</section>}
  {tab==='bill'&&<section className="panel"><h2>Your visit’s bill</h2>{visit?.orders.flatMap(o=>o.items).map((i,n)=><div className="orderline" key={n}><span>{i.qty} × {i.name}</span><strong>{money(i.price*i.qty)}</strong></div>)}{receipt&&<><div className="between"><span>Subtotal</span><b>{money(receipt.subtotal)}</b></div><div className="between"><span>Tax ({visit?.tax}%)</span><b>{money(receipt.tax)}</b></div><div className="between grandtotal"><strong>Total</strong><strong>{money(receipt.total)}</strong></div></>}<p>Settle with staff at the counter. Pay at the restaurant; online payment is not available.</p>{visit&&visit.orders.length>0&&<GuestFeedback config={config} token={token}/>}</section>}
- <nav className="pilot-tabs" aria-label="Dining navigation">{[['home','Home',LayoutDashboard],['menu','Menu',UtensilsCrossed],['bag',`Bag (${cart.reduce((s,i)=>s+i.qty,0)})`,ShoppingBag],['orders','Orders',ChefHat],['bill','Bill',ReceiptText]].map(([id,label,Icon])=><button key={id as string} className={tab===id?'selected':''} onClick={()=>setTab(id as string)}><Icon size={21}/>{label as string}</button>)}</nav></main>
+ <nav className="pilot-tabs" aria-label="Dining navigation">{[['menu','Menu',UtensilsCrossed],['bag',`Bag (${cart.reduce((s,i)=>s+i.qty,0)})`,ShoppingBag],['orders','Orders',ChefHat],['bill','Bill',ReceiptText]].map(([id,label,Icon])=><button key={id as string} className={tab===id?'selected':''} onClick={()=>setTab(id as string)}><Icon size={21}/>{label as string}</button>)}</nav></main>;
 }
 function TicketCard({ticket,table,onNext,busy}:{ticket:Visit['orders'][number];table?:number;onNext?:()=>void;busy?:boolean}){return <article className="panel pilot-ticket"><div className="between"><strong>{table?`Table ${table} · `:''}#{ticket.id.slice(0,6).toUpperCase()}</strong><span className="status">{ticket.status}</span></div><p className="muted">{new Date(ticket.created).toLocaleTimeString()}</p>{ticket.items.map((i,n)=><div className="orderline" key={n}><span>{i.qty} × {i.name}{i.note&&<small>{i.note}</small>}</span><strong>{money(i.price*i.qty)}</strong></div>)}<div className="between"><b>{money(sum(ticket.items))}</b>{onNext&&<button className="btn" disabled={busy} onClick={onNext}>{busy?'Updating…':ticket.status==='Placed'?'Start preparing':ticket.status==='Preparing'?'Mark ready':'Mark served'}</button>}</div></article>}
 function Staff({config}:{config:Config}){return <main className="pilot-main"><a className="btn" href="/login">Sign in with username and password</a></main>}
