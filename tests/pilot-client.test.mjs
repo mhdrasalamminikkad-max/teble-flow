@@ -1,0 +1,17 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import ts from 'typescript';
+import {readFileSync} from 'node:fs';
+const code=ts.transpileModule(readFileSync(new URL('../lib/pilot-client.ts',import.meta.url),'utf8'),{compilerOptions:{module:ts.ModuleKind.ESNext,target:ts.ScriptTarget.ES2022}}).outputText;
+const {rpc,RpcError,stage,bill,readDraft}=await import('data:text/javascript;base64,'+Buffer.from(code).toString('base64'));
+const config={url:'https://example.supabase.co',publishableKey:'sb_publishable_test',configured:true};
+const dish={id:'meal',name:'Meal',price:249,available:true};
+test('network failures stay unconfirmed, database validation errors are definitive',async()=>{await assert.rejects(()=>rpc(config,'tfp_order',{},async()=>{throw Error('disconnected')}),e=>e instanceof RpcError&&e.uncertain);await assert.rejects(()=>rpc(config,'tfp_order',{},async()=>new Response(JSON.stringify({message:'Visit ended'}),{status:400})),e=>!e.uncertain&&e.message==='Visit ended');await assert.rejects(()=>rpc(config,'tfp_order',{},async()=>new Response(JSON.stringify({message:'gateway'}),{status:502})),e=>e.uncertain)});
+test('retry transport preserves the exact submission ID and payload',async()=>{const sent=[];const args={p_request:crypto.randomUUID(),p_items:[{id:'meal',qty:2,price:249,note:''}]};const network=async(url,init)=>{sent.push(JSON.parse(init.body));if(sent.length===1)throw Error('response lost after commit');return new Response(JSON.stringify('accepted-id'))};await assert.rejects(()=>rpc(config,'tfp_order',args,network));assert.equal(await rpc(config,'tfp_order',args,network),'accepted-id');assert.deepEqual(sent[0],sent[1])});
+test('draft restoration preserves the pending receipt and rejects corrupt quantities',()=>{const pending={id:crypto.randomUUID(),items:[{id:'meal',name:'Meal',qty:2,price:249,note:''}]};assert.deepEqual(readDraft(JSON.stringify({cart:pending.items,pending})),{cart:pending.items,pending});assert.throws(()=>readDraft(JSON.stringify({cart:[{...pending.items[0],qty:-1}]})))});
+test('quantity and price math remain bounded and visit-scoped',()=>{const items=stage([],dish,2);assert.equal(items[0].qty,2);assert.throws(()=>stage(items,dish,19));assert.deepEqual(stage(items,dish,-2),[]);assert.deepEqual(bill({tax:5,orders:[{items}]}),{subtotal:498,tax:24.9,total:522.9});assert.equal(bill({tax:5,orders:[]}).total,0)});
+test('unconfigured pilot never sends network requests',async()=>{let called=false;await assert.rejects(()=>rpc({...config,configured:false},'tfp_order',{},async()=>{called=true;return new Response()}));assert.equal(called,false)});
+
+test('successful void actions accept empty responses without a false connection error',async()=>{for(const name of ['tfp_admin_manage','tfp_resolve_review','tfp_status'])assert.equal(await rpc(config,name,{},async()=>new Response(null,{status:204})),null)});
+test('login transport errors never claim an order was submitted',async()=>{await assert.rejects(()=>rpc(config,'tfp_admin_login',{},async()=>{throw Error('offline')}),e=>e.uncertain&&e.message.includes('sign-in service')&&!e.message.includes('order'))});
+test('missing login confirmation and malformed gateway responses remain failures',async()=>{await assert.rejects(()=>rpc(config,'tfp_admin_login',{},async()=>new Response('')),e=>e.uncertain);await assert.rejects(()=>rpc(config,'tfp_order',{},async()=>new Response('<html>Bad gateway</html>',{status:502})),e=>e.uncertain&&e.message.includes('HTTP 502'))});

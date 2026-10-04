@@ -1,0 +1,30 @@
+TABLEFLOW PROJECT
+
+This package contains the published source version (commit c75d6924802c4ca7c35eea8207d6765e91ea8c85).
+
+Implemented in the published version:
+- QR scanning home page and 786786 login-page shortcut.
+- Authenticated platform admin and restaurant-owner access.
+- Restaurant creation with owner credentials and assigned fees.
+- Live ordering, separate table visits, kitchen status, QR codes and menu editing.
+
+IMPORTANT: The requested restoration of the older design and expanded dashboards are NOT finished in this snapshot.
+The unfinished-dashboard-changes folder contains draft source for restaurant management, billing, staff/table controls and review resolution. These files have not been integrated or fully tested. Do not apply 006_operations.sql to production yet.
+The earlier design remains in components/tableflow/app.tsx as reference; it uses demo data and is not the active live application.
+
+DATABASE SETUP
+For an existing configured database, do not rerun first-admin creation or reset credentials.
+For a fresh database, inspect and run supabase/002_live_pilot.sql, then 004_restaurant_admin.sql, then 005_first_admin.sql. Save the generated admin credentials privately.
+003_pilot_rehearsal.sql is optional TEST data, not a real restaurant menu.
+
+RUNTIME CONFIGURATION
+Set SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY in your hosting environment.
+Credentials, local environment files, database contents and installed dependencies are not included.
+This ZIP is project source, not an APK or a standalone desktop installer.
+
+LOCAL DEVELOPMENT
+Use Node.js compatible with the package.json engines requirement and pnpm 11.25.0.
+Install with pnpm install --frozen-lockfile.
+Run pnpm dev or pnpm build.
+Hosting uses Cloudflare-compatible output and the existing Sites configuration in .openai/hosting.json.
+Keep the existing Site project ID when updating the same hosted site.

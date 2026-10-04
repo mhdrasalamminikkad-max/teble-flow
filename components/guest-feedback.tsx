@@ -1,0 +1,9 @@
+'use client';
+import {useRef,useState} from 'react';
+import {Star} from 'lucide-react';
+import {rpc,type Config} from '@/lib/pilot-client';
+export default function GuestFeedback({config,token}:{config:Config;token:string}){
+ const [rating,setRating]=useState(5),[comment,setComment]=useState(''),[busy,setBusy]=useState(false),[saved,setSaved]=useState(false),[error,setError]=useState('');const lock=useRef(false);
+ if((config.version||0)<3)return null;
+ return <section className="ops-panel" style={{marginTop:24}}><h2>How was your time with us?</h2><p className="muted">A few words can make the next visit even better.</p>{saved?<p role="status" className="portal-success">Thank you. Your feedback is with the restaurant team.</p>:<form className="form" onSubmit={async e=>{e.preventDefault();if(lock.current)return;lock.current=true;setBusy(true);setError('');try{await rpc(config,'tfp_guest_review',{p_token:token,p_rating:rating,p_comment:comment});setSaved(true)}catch(e){setError(e instanceof Error?e.message:'Could not send feedback. Please retry.')}finally{lock.current=false;setBusy(false)}}}><div className="ops-stars" role="group" aria-label="Rate your visit">{[1,2,3,4,5].map(n=><button type="button" key={n} aria-label={`${n} stars`} aria-pressed={rating===n} disabled={busy} onClick={()=>setRating(n)} style={{padding:10}}><Star size={25} fill={n<=rating?'currentColor':'none'}/></button>)}</div><label>Your feedback<textarea maxLength={2000} value={comment} disabled={busy} onChange={e=>setComment(e.target.value)} placeholder="What did you enjoy? What could we do better?" style={{width:'100%',minHeight:90,border:'1px solid #e2e4db',borderRadius:8,padding:12}}/></label>{error&&<p role="alert" className="portal-error">{error}</p>}<button className="btn" disabled={busy}>{busy?'Sending…':'Share feedback'}</button></form>}</section>
+}
