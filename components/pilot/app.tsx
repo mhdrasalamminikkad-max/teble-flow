@@ -49,7 +49,10 @@ function useLive(config:Config,signal:string|undefined,refresh:()=>Promise<void>
  return()=>{active=false;clearInterval(timer);window.removeEventListener('online',run);window.removeEventListener('offline',offline);document.removeEventListener('visibilitychange',visible);if(channel)void client?.removeChannel(channel)}
  },[config,signal]);return {state,last};
 }
-function Connection({state,last}:{state:string;last:number|null}){return <div className={`pilot-connection ${state==='Connected'?'':'warning'}`} role="status">{state==='Connected'?<RefreshCw size={15}/>:<WifiOff size={15}/>}<span>{state}{last&&` · Last checked ${new Date(last).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit',second:'2-digit'})}`}</span></div>}
+function Connection({state}:{state:string;last:number|null}){
+ if(state==='Connected')return null;
+ return <div className="pilot-connection warning" role="status"><WifiOff size={15}/><span>{state}</span></div>;
+}
 function Guest({config,qr}:{config:Config;qr:string}){
  const [menu,setMenu]=useState<Menu|null>(null),[visit,setVisit]=useState<Visit|null>(null),[token,setToken]=useState(''),[replaced,setReplaced]=useState(false),[cart,setCart]=useState<Item[]>([]),[pending,setPending]=useState<Pending|null>(null),[tab,setTab]=useState('home'),[busy,setBusy]=useState(false),[error,setError]=useState(''),[search,setSearch]=useState('');
  const current=useRef({cart,pending,visit,token});current.current={cart,pending,visit,token};const lock=useRef(false),draftLoaded=useRef(''),storageFailed=useRef(false);
