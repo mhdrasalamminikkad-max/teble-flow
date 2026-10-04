@@ -14,8 +14,8 @@ export async function GET() {
     vars = process.env as unknown as Record<string, unknown>;
   }
 
-  const url = String(vars.SUPABASE_URL || '').trim();
-  const key = String(vars.SUPABASE_PUBLISHABLE_KEY || '').trim();
+  const url = String(vars.SUPABASE_URL || vars.NEXT_PUBLIC_SUPABASE_URL || '').trim();
+  const key = String(vars.SUPABASE_PUBLISHABLE_KEY || vars.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY || '').trim();
   const keyPresent = key.startsWith('sb_publishable_');
   let version = 0;
   let databaseReady = false;
