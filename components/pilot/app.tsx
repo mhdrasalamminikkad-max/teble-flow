@@ -13,9 +13,30 @@ function message(e:unknown){return e instanceof Error?e.message:'Please try agai
 const tokenKey=(qr:string)=>`tfp-guest:${qr}`;
 const draftKey=(qr:string,visit:string)=>`tfp-bag:${qr}:${visit}`;
 export default function Pilot(){
- const [config,setConfig]=useState<Config|null>(null),[bootError,setBootError]=useState(''),[qr,setQr]=useState(''),[staffMode,setStaffMode]=useState(false);
- useEffect(()=>{const q=new URLSearchParams(location.search);setQr(q.get('qr')||'');setStaffMode(q.get('staff')==='1');if(q.get('staff')==='1')location.replace('/login');fetch('/api/pilot-config',{cache:'no-store'}).then(r=>{if(!r.ok)throw Error('Could not check the pilot connection.');return r.json()}).then(raw=>{const c=raw as Config;if(typeof c.url!=='string'||typeof c.publishableKey!=='string'||typeof c.configured!=='boolean')throw Error('Invalid pilot configuration.');setConfig(c)}).catch(e=>setBootError(message(e)))},[]);
- return <div className="pilot"><Toaster position="top-center" richColors/><header className="pilot-header"><a href="/" className="brand"><span className="brand-icon"><UtensilsCrossed size={20}/></span>TABLE<span>FLOW</span></a><span className="pilot-label">LIVE DINING</span></header>{bootError?<main className="pilot-main"><h1>Connection check failed</h1><p role="alert">{bootError}</p><button className="btn" onClick={()=>location.reload()}>Try again</button></main>:!config?<main className="pilot-main" role="status">Checking pilot setup…</main>:!config.configured?<Setup config={config}/>:staffMode?<Staff config={config}/>:qr?<Guest config={config} qr={qr}/>:<main className="pilot-main"><p className="eyebrow">WELCOME TO TABLEFLOW</p><h1>Your table starts here.</h1><p>Scan the QR at your table to open the menu. No visit code needed.</p><a className="btn" href="/login">Staff sign in</a><PilotChecklist/></main>}</div>
+ const [config,setConfig]=useState<Config|null>(()=>{
+  if(typeof window==='undefined')return null;
+  try{
+   const saved=localStorage.getItem('tfp-config-cache');
+   if(saved){
+    const parsed=JSON.parse(saved);
+    if(parsed?.url&&parsed?.publishableKey&&parsed?.configured)return parsed as Config;
+   }
+  }catch{}
+  return null;
+ }),[bootError,setBootError]=useState(''),[qr,setQr]=useState(''),[staffMode,setStaffMode]=useState(false);
+ useEffect(()=>{
+  const q=new URLSearchParams(location.search);
+  setQr(q.get('qr')||'');
+  setStaffMode(q.get('staff')==='1');
+  if(q.get('staff')==='1')location.replace('/login');
+  fetch('/api/pilot-config').then(r=>{if(!r.ok)throw Error('Could not check the connection.');return r.json()}).then(raw=>{
+   const c=raw as Config;
+   if(typeof c.url!=='string'||typeof c.publishableKey!=='string'||typeof c.configured!=='boolean')throw Error('Invalid pilot configuration.');
+   setConfig(c);
+   try{localStorage.setItem('tfp-config-cache',JSON.stringify(c))}catch{}
+  }).catch(e=>{if(!config)setBootError(message(e))});
+ },[]);
+ return <div className="pilot"><Toaster position="top-center" richColors/><header className="pilot-header"><a href="/" className="brand"><span className="brand-icon"><UtensilsCrossed size={20}/></span>TABLE<span>FLOW</span></a><span className="pilot-label">LIVE DINING</span></header>{bootError?<main className="pilot-main"><h1>Connection check failed</h1><p role="alert">{bootError}</p><button className="btn" onClick={()=>location.reload()}>Try again</button></main>:!config?<main className="pilot-main" role="status"><p className="eyebrow">OPENING TABLE</p><h1>Loading your menu…</h1></main>:!config.configured?<Setup config={config}/>:staffMode?<Staff config={config}/>:qr?<Guest config={config} qr={qr}/>:<main className="pilot-main"><p className="eyebrow">WELCOME TO TABLEFLOW</p><h1>Your table starts here.</h1><p>Scan the QR at your table to open the menu. No visit code needed.</p><a className="btn" href="/login">Staff sign in</a><PilotChecklist/></main>}</div>
 }
 function Setup({config}:{config:Config}){return <main className="pilot-main"><p className="eyebrow">PILOT PREPARATION</p><h1>Ready for setup.</h1><p className="pilot-intro">Live orders are not activated yet. Please ask your waiter for help while the connection is restored.</p><div className="pilot-setup-grid"><section className="panel"><h2>Connection checklist</h2><ol className="pilot-checklist"><li>Supabase project URL received.</li><li>{config.keyPresent?'Publishable key configured.':'Publishable key still required.'}</li><li>{config.setupMessage||'Pilot database migration must be applied and verified.'}</li><li>Create the restaurant’s staff PINs and load its actual menu and prices.</li><li>Check access from the kitchen device and customer phones.</li></ol><a href="/" className="btn secondary">Return to scanner</a></section><PilotChecklist/></div></main>}
 function PilotChecklist(){return <section className="panel"><h2>2–3-table trial</h2><p>Run these with test orders before serving guests. Results are pending real-device testing.</p><ol className="pilot-checklist"><li>Use two customer phones and one kitchen device. Open tables 1–3 and print their QR codes.</li><li>Scan with one phone, then another. Verify that the first phone loses access and cannot order.</li><li>Tap Place order repeatedly. Confirm that only one ticket appears.</li><li>Disconnect during submission, reconnect and retry. Confirm exactly one ticket and a clear receipt.</li><li>Close a settled visit. Open a new visit and confirm an empty bag and bill; the old device must no longer be able to order.</li><li>Check cards and buttons on each phone. Aim for tap feedback within 200 ms and kitchen updates within 2 seconds on good Wi-Fi; record actual timings.</li><li>Keep the normal ordering method available. Stop the trial if a ticket is lost, duplicated, sent to another table or billed incorrectly.</li></ol></section>}
